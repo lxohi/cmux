@@ -931,11 +931,7 @@ final class TerminalCmdClickUITests: XCTestCase {
     }
 
     private func launchAndEnsureForeground(_ app: XCUIApplication, timeout: TimeInterval = 12.0) {
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("App activation may fail on headless GUI runners", options: options) {
-            app.launch()
-        }
+        app.launch()
 
         guard app.state == .runningForeground || app.state == .runningBackground else {
             XCTFail("App failed to start. state=\(app.state.rawValue)")

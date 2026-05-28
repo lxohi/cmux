@@ -273,11 +273,7 @@ final class WorkspaceDescriptionUITests: XCTestCase {
     }
 
     private func launchAndEnsureForeground(_ app: XCUIApplication, timeout: TimeInterval = 12.0) {
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("App activation may fail on headless CI runners", options: options) {
-            app.launch()
-        }
+        app.launch()
 
         if app.state == .runningForeground { return }
         if app.state == .runningBackground { return }

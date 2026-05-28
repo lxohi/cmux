@@ -286,11 +286,7 @@ final class FindSelectionShortcutUITests: XCTestCase {
     }
 
     private func launchAndEnsureForeground(_ app: XCUIApplication) {
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("App activation may fail on headless CI runners", options: options) {
-            app.launch()
-        }
+        app.launch()
 
         if app.state == .runningForeground || app.state == .runningBackground { return }
         XCTFail("App failed to start. state=\(app.state.rawValue)")

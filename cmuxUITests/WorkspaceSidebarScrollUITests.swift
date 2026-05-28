@@ -246,11 +246,7 @@ final class WorkspaceSidebarScrollUITests: XCTestCase {
     }
 
     private func launchAndEnsureRunning(_ app: XCUIApplication) {
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("Headless CI may launch the app without foreground activation", options: options) {
-            app.launch()
-        }
+        app.launch()
         XCTAssertTrue(
             pollUntil(timeout: 10.0) {
                 app.state == .runningForeground || app.state == .runningBackground

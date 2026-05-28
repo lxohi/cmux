@@ -380,11 +380,7 @@ final class TitlebarShortcutHintsUITests: XCTestCase {
             app.launchEnvironment["CMUX_UI_TEST_SHORTCUT_HINTS_ALWAYS_SHOW"] = "1"
         }
         app.launchArguments += ["-workspacePresentationMode", "standard"]
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("App activation may fail on headless CI runners", options: options) {
-            app.launch()
-        }
+        app.launch()
 
         _ = pollUntil(timeout: 2.0) {
             guard app.state != .runningForeground else {

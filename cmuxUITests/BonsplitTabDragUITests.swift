@@ -865,11 +865,7 @@ final class BonsplitTabDragUITests: XCTestCase {
             app.launchEnvironment["CMUX_UI_TEST_SHORTCUT_HINTS_ALWAYS_SHOW"] = "1"
         }
         app.launchArguments += ["-workspacePresentationMode", presentationMode.rawValue]
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("App activation may fail on headless CI runners", options: options) {
-            app.launch()
-        }
+        app.launch()
         return (app, dataPath)
     }
 
