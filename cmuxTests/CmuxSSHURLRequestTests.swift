@@ -130,6 +130,33 @@ final class CmuxSSHURLRequestTests: XCTestCase {
         }
     }
 
+    func testParsesStandardSSHURL() throws {
+        let url = try XCTUnwrap(URL(string: "ssh://alice@dev.example.com:2222?title=Dev%20SSH"))
+
+        switch CmuxSSHURLRequest.parse(url) {
+        case .success(.some(let request)):
+            XCTAssertEqual(request.destination, "alice@dev.example.com")
+            XCTAssertEqual(request.port, 2222)
+            XCTAssertEqual(request.title, "Dev SSH")
+            XCTAssertEqual(request.cliArguments, ["ssh", "--port", "2222", "--name", "Dev SSH", "alice@dev.example.com"])
+        case .success(nil):
+            XCTFail("Expected standard SSH URL request")
+        case .failure(let error):
+            XCTFail("Unexpected parse error: \(error)")
+        }
+    }
+
+    func testRejectsStandardSSHURLWithPathDestination() throws {
+        let url = try XCTUnwrap(URL(string: "ssh://dev.example.com/run"))
+
+        switch CmuxSSHURLRequest.parse(url) {
+        case .failure(.conflictingDestinationParameters):
+            break
+        default:
+            XCTFail("Expected path destination rejection")
+        }
+    }
+
     func testParsesNoFocusFlagWithoutValue() throws {
         let url = try XCTUnwrap(URL(string: "\(supportedScheme)://ssh?host=dev.example.com&no-focus"))
 

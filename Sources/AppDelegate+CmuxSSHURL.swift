@@ -1,6 +1,194 @@
 import AppKit
 import Bonsplit
 import Foundation
+import UniformTypeIdentifiers
+
+extension Notification.Name {
+    static let defaultTerminalRegistrationDidChange = Notification.Name("DefaultTerminalRegistration.didChange")
+}
+
+struct DefaultTerminalRegistrationStatus: Equatable {
+    let matchedTargetCount: Int
+    let targetCount: Int
+
+    var isDefault: Bool {
+        matchedTargetCount == targetCount
+    }
+}
+
+enum DefaultTerminalRegistrationError: Error, LocalizedError {
+    case launchServicesRegistrationFailed(OSStatus)
+    case missingContentType(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .launchServicesRegistrationFailed(let status):
+            return "Launch Services registration failed with status \(status)."
+        case .missingContentType(let identifier):
+            return "macOS does not know the content type \(identifier)."
+        }
+    }
+}
+
+enum DefaultTerminalRegistration {
+    static let urlSchemes = ["ssh"]
+    static let contentTypeIdentifiers = [
+        "com.apple.terminal.shell-script",
+        "public.unix-executable"
+    ]
+
+    static var targetCount: Int {
+        urlSchemes.count + contentTypeIdentifiers.count
+    }
+
+    static func currentStatus(
+        bundleURL: URL = Bundle.main.bundleURL,
+        workspace: NSWorkspace = .shared
+    ) -> DefaultTerminalRegistrationStatus {
+        let normalizedBundleURL = normalizedApplicationURL(bundleURL)
+        let matchedURLSchemes = urlSchemes.filter { scheme in
+            guard let url = URL(string: "\(scheme)://cmux-default-terminal-check") else {
+                return false
+            }
+            return normalizedApplicationURL(workspace.urlForApplication(toOpen: url)) == normalizedBundleURL
+        }.count
+
+        let matchedContentTypes = contentTypeIdentifiers.filter { identifier in
+            guard let contentType = UTType(identifier) else { return false }
+            return normalizedApplicationURL(workspace.urlForApplication(toOpen: contentType)) == normalizedBundleURL
+        }.count
+
+        return DefaultTerminalRegistrationStatus(
+            matchedTargetCount: matchedURLSchemes + matchedContentTypes,
+            targetCount: targetCount
+        )
+    }
+
+    static func setAsDefault(bundleURL: URL = Bundle.main.bundleURL) async throws {
+        let normalizedBundleURL = bundleURL.standardizedFileURL
+        let registerStatus = LSRegisterURL(normalizedBundleURL as CFURL, true)
+        guard registerStatus == noErr else {
+            throw DefaultTerminalRegistrationError.launchServicesRegistrationFailed(registerStatus)
+        }
+
+        for scheme in urlSchemes {
+            try await NSWorkspace.shared.setDefaultApplication(
+                at: normalizedBundleURL,
+                toOpenURLsWithScheme: scheme
+            )
+        }
+
+        for identifier in contentTypeIdentifiers {
+            guard let contentType = UTType(identifier) else {
+                throw DefaultTerminalRegistrationError.missingContentType(identifier)
+            }
+            try await NSWorkspace.shared.setDefaultApplication(
+                at: normalizedBundleURL,
+                toOpen: contentType
+            )
+        }
+
+        await MainActor.run {
+            NotificationCenter.default.post(name: .defaultTerminalRegistrationDidChange, object: nil)
+        }
+    }
+
+    private static func normalizedApplicationURL(_ url: URL?) -> URL? {
+        url?.standardizedFileURL.resolvingSymlinksInPath()
+    }
+}
+
+@MainActor
+enum DefaultTerminalUserAction {
+    static func setAsDefault(debugSource: String) {
+#if DEBUG
+        cmuxDebugLog("defaultTerminal.setAsDefault source=\(debugSource)")
+#endif
+        Task {
+            do {
+                try await DefaultTerminalRegistration.setAsDefault()
+            } catch {
+#if DEBUG
+                cmuxDebugLog("defaultTerminal.setAsDefault.failed source=\(debugSource) error=\(error)")
+#endif
+                presentSetAsDefaultError(error)
+            }
+        }
+    }
+
+    private static func presentSetAsDefaultError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String(
+            localized: "dialog.defaultTerminal.setFailed.title",
+            defaultValue: "Could Not Set Default Terminal"
+        )
+        alert.informativeText = String(
+            localized: "dialog.defaultTerminal.setFailed.message",
+            defaultValue: "macOS could not update every default terminal handler."
+        )
+        alert.addButton(withTitle: String(localized: "common.ok", defaultValue: "OK"))
+        alert.runModal()
+    }
+}
+
+struct TerminalDefaultFileOpenRequest: Equatable {
+    let fileURL: URL
+    let workingDirectory: String
+    let initialInput: String
+
+    init?(fileURL: URL, contentType: UTType? = nil) {
+        guard fileURL.isFileURL else { return nil }
+        let standardizedURL = fileURL.standardizedFileURL
+        let resolvedContentType = contentType ?? Self.contentType(for: standardizedURL)
+        guard Self.shouldRunInTerminal(fileURL: standardizedURL, contentType: resolvedContentType) else {
+            return nil
+        }
+
+        self.fileURL = standardizedURL
+        self.workingDirectory = standardizedURL.deletingLastPathComponent().path(percentEncoded: false)
+        self.initialInput = "\(Self.shellSingleQuoted(standardizedURL.path(percentEncoded: false)))\n"
+    }
+
+    static func requests(from urls: [URL]) -> [TerminalDefaultFileOpenRequest] {
+        var seen: Set<String> = []
+        var requests: [TerminalDefaultFileOpenRequest] = []
+        for url in urls {
+            guard let request = TerminalDefaultFileOpenRequest(fileURL: url) else { continue }
+            let path = request.fileURL.path(percentEncoded: false)
+            guard seen.insert(path).inserted else { continue }
+            requests.append(request)
+        }
+        return requests
+    }
+
+    private static func contentType(for fileURL: URL) -> UTType? {
+        try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType
+    }
+
+    private static func shouldRunInTerminal(fileURL: URL, contentType: UTType?) -> Bool {
+        if isTerminalShellScript(fileURL: fileURL, contentType: contentType) {
+            return true
+        }
+        return contentType?.conforms(to: .unixExecutable) == true
+    }
+
+    private static func isTerminalShellScript(fileURL: URL, contentType: UTType?) -> Bool {
+        if contentType?.identifier == "com.apple.terminal.shell-script" {
+            return true
+        }
+        switch fileURL.pathExtension.lowercased() {
+        case "command", "tool":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func shellSingleQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+}
 
 @MainActor
 final class CmuxSSHURLProcessLauncher {
