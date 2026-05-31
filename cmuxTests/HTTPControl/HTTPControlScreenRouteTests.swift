@@ -1,4 +1,3 @@
-import CmuxTerminalAccess
 import Foundation
 import Testing
 @testable import cmux

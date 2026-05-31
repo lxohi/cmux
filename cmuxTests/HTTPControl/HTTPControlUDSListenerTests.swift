@@ -8,7 +8,6 @@
 import Darwin
 import Foundation
 import Testing
-import CmuxTerminalAccess
 @testable import cmux
 
 @Suite struct HTTPControlUDSListenerTests {

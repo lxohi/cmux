@@ -7,7 +7,6 @@
 
 import Foundation
 import Testing
-import CmuxTerminalAccess
 @testable import cmux
 
 @Suite struct HTTPControlLifecycleTests {

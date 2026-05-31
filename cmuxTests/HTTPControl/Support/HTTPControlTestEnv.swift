@@ -25,7 +25,6 @@
 // signature so Phase 2's plan can reference the symbol, and the
 // fallback path lights up when Task 0.24a lands.
 
-import CmuxTerminalAccess
 import Foundation
 @testable import cmux
 

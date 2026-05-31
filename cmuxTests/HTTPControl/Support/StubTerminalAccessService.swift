@@ -1,4 +1,3 @@
-import CmuxTerminalAccess
 import Foundation
 
 /// In-memory stub used by HTTPControl route tests.
