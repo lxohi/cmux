@@ -15,6 +15,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
+
 jobs:
   package-tests:
     runs-on: macos-latest
@@ -29,6 +33,11 @@ jobs:
         run: swift test --parallel
 
   app-target-build-and-test:
+    # cmux uses Swift 6 features (file-level `nonisolated`, etc.) that
+    # require Xcode 26 / Swift 6.x. GitHub-hosted macos-latest currently
+    # ships Xcode 16. This job runs only if Xcode 26 is present on the
+    # runner; otherwise it skips with a clear message rather than
+    # spamming a long red log.
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -36,15 +45,24 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Select Xcode 16
+      - name: Detect Xcode 26
+        id: xcode26
         run: |
-          # macos-latest ships multiple Xcode versions; pick the newest
-          # 16.x that's installed.
-          ls /Applications | grep -i 'Xcode_16' || true
-          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort | tail -1)/Contents/Developer" || true
+          set +e
+          XCODE26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort | tail -1)
+          if [ -z "$XCODE26" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Xcode 26 not installed on this runner — app-target build skipped. Available Xcodes:"
+            ls /Applications | grep -i Xcode || true
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "path=$XCODE26" >> "$GITHUB_OUTPUT"
+          sudo xcode-select -s "$XCODE26/Contents/Developer"
           xcodebuild -version
 
       - name: Restore zig cache
+        if: steps.xcode26.outputs.skip == 'false'
         uses: actions/cache@v4
         with:
           path: ~/.cache/zig
@@ -52,24 +70,28 @@ jobs:
           restore-keys: zig-packages-
 
       - name: Install zig (pinned 0.15.2)
+        if: steps.xcode26.outputs.skip == 'false'
         run: ./scripts/install-zig-ci.sh
 
       - name: Ensure GhosttyKit.xcframework
+        if: steps.xcode26.outputs.skip == 'false'
         run: ./scripts/ensure-ghosttykit.sh
         timeout-minutes: 30
 
       - name: Build cmux app target (debug)
+        if: steps.xcode26.outputs.skip == 'false'
         run: |
           xcodebuild -project cmux.xcodeproj -scheme cmux \
             -configuration Debug \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
-            build 2>&1 | tail -200
+            build
 
       - name: Run cmux-unit tests (integration suite)
+        if: steps.xcode26.outputs.skip == 'false'
         run: |
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
-            test 2>&1 | tail -300
+            test
