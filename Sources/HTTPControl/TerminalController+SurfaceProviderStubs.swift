@@ -184,7 +184,7 @@ extension TerminalController {
         let text = String(decoding: bytes, as: UTF8.self)
         let result = panel.sendInputResult(text)
         switch result {
-        case .sent, .queued, .focused:
+        case .sent, .queued:
             return
         case .inputQueueFull:
             throw TerminalAccessError.payloadTooLarge
@@ -272,7 +272,7 @@ extension TerminalController {
                 mods
             )
         case .move:
-            ghostty_surface_mouse_pos(surface, Double(event.x), Double(event.y))
+            ghostty_surface_mouse_pos(surface, Double(event.x), Double(event.y), mods)
         case .scroll:
             // The scroll-mods integer encoding lives in ghostty's
             // input/mouse.zig as a packed struct; cmux currently has no
