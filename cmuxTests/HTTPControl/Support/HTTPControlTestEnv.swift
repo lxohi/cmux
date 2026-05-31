@@ -1,3 +1,4 @@
+import CmuxTerminalAccess
 // SPDX-License-Identifier: MIT
 //
 // Task 1.22a / Errata E6 — single locked Phase 1 helper that Phase 2
