@@ -2919,6 +2919,7 @@
 					Carbon,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.app.debug;
+				PRODUCT_MODULE_NAME = cmux;
 				PRODUCT_NAME = "cmux DEV";
 				SPARKLE_PUBLIC_KEY = "avjcgKibf1FTvhIjLBxhd+0HSpsXU4D0IGlVk8cgqRc=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
