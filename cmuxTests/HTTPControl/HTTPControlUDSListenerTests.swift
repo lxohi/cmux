@@ -56,19 +56,21 @@ import Testing
         let maxLen = MemoryLayout.size(ofValue: addr.sun_path)
         let pathBytes = Array(path.utf8)
         try #require(pathBytes.count < maxLen)
-        let connected = withUnsafeMutablePointer(to: &addr.sun_path.0) { ptr -> Int32 in
+        // Write path bytes in their own scope, then connect in a
+        // separate scope (Swift exclusivity).
+        withUnsafeMutablePointer(to: &addr.sun_path.0) { ptr in
             for (i, byte) in pathBytes.enumerated() {
                 ptr.advanced(by: i).pointee = Int8(bitPattern: byte)
             }
             ptr.advanced(by: pathBytes.count).pointee = 0
-            return withUnsafePointer(to: &addr) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.connect(
-                        fd,
-                        $0,
-                        socklen_t(MemoryLayout<sockaddr_un>.size)
-                    )
-                }
+        }
+        let connected = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(
+                    fd,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_un>.size)
+                )
             }
         }
         #expect(connected == 0)
@@ -122,18 +124,18 @@ import Testing
         memset(&addr, 0, MemoryLayout<sockaddr_un>.size)
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(path.utf8)
-        _ = withUnsafeMutablePointer(to: &addr.sun_path.0) { ptr -> Int32 in
+        withUnsafeMutablePointer(to: &addr.sun_path.0) { ptr in
             for (i, byte) in pathBytes.enumerated() {
                 ptr.advanced(by: i).pointee = Int8(bitPattern: byte)
             }
             ptr.advanced(by: pathBytes.count).pointee = 0
-            return withUnsafePointer(to: &addr) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.connect(
-                        fd, $0,
-                        socklen_t(MemoryLayout<sockaddr_un>.size)
-                    )
-                }
+        }
+        _ = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(
+                    fd, $0,
+                    socklen_t(MemoryLayout<sockaddr_un>.size)
+                )
             }
         }
         let req = "GET /v1/surfaces HTTP/1.1\r\n"
