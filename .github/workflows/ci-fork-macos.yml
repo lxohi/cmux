@@ -1,0 +1,75 @@
+name: Fork macOS CI
+
+# Runs on GitHub-hosted macos-latest (free for public-repo forks).
+# Mirrors the warp-macos-* jobs in ci.yml but uses runners the fork
+# has access to. Triggered on every push to any branch in this fork,
+# and on workflow_dispatch.
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-tests:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: swift test on CmuxTerminalAccess (leaf package)
+        working-directory: Packages/CmuxTerminalAccess
+        run: swift test --parallel
+
+  app-target-build-and-test:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode 16
+        run: |
+          # macos-latest ships multiple Xcode versions; pick the newest
+          # 16.x that's installed.
+          ls /Applications | grep -i 'Xcode_16' || true
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort | tail -1)/Contents/Developer" || true
+          xcodebuild -version
+
+      - name: Restore zig cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig
+          key: zig-packages-${{ hashFiles('ghostty/build.zig.zon') }}
+          restore-keys: zig-packages-
+
+      - name: Install zig (pinned 0.15.2)
+        run: ./scripts/install-zig-ci.sh
+
+      - name: Ensure GhosttyKit.xcframework
+        run: ./scripts/ensure-ghosttykit.sh
+        timeout-minutes: 30
+
+      - name: Build cmux app target (debug)
+        run: |
+          xcodebuild -project cmux.xcodeproj -scheme cmux \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath /tmp/cmux-fork-derived \
+            build 2>&1 | tail -200
+
+      - name: Run cmux-unit tests (integration suite)
+        run: |
+          xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath /tmp/cmux-fork-derived \
+            test 2>&1 | tail -300
