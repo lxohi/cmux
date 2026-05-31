@@ -78,20 +78,34 @@ jobs:
         run: ./scripts/ensure-ghosttykit.sh
         timeout-minutes: 30
 
+      - name: Resolve Swift package dependencies
+        if: steps.xcode26.outputs.skip == 'false'
+        run: |
+          xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
+            -configuration Debug \
+            -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
+            -resolvePackageDependencies
+
       - name: Build cmux app target (debug)
         if: steps.xcode26.outputs.skip == 'false'
         run: |
-          xcodebuild -project cmux.xcodeproj -scheme cmux \
+          xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
+            -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
+            -disableAutomaticPackageResolution \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
-            build
+            CMUX_SKIP_ZIG_BUILD=1 \
+            build-for-testing
 
       - name: Run cmux-unit tests (integration suite)
         if: steps.xcode26.outputs.skip == 'false'
         run: |
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
+            -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
+            -disableAutomaticPackageResolution \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
-            test
+            CMUX_SKIP_ZIG_BUILD=1 \
+            test-without-building
