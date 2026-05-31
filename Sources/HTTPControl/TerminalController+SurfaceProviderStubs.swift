@@ -190,6 +190,8 @@ extension TerminalController {
             throw TerminalAccessError.payloadTooLarge
         case .surfaceUnavailable:
             throw TerminalAccessError.unknownSurface
+        case .processExited:
+            throw TerminalAccessError.unsupported(reason: "process exited")
         }
     }
 
@@ -216,7 +218,13 @@ extension TerminalController {
         // Hold text storage alive across the C call.
         var textHolder: ContiguousArray<CChar> = []
         let mods = keyMods(event.mods)
-        let physical = ghosttyPhysical(event.key)
+        // `ghosttyPhysical(event.key)` is the physical-key enum but
+        // `ghostty_input_key_s` takes a raw `keycode` (HID-style scan
+        // code), not the enum. For now we leave `keycode: 0` and rely
+        // on `text` + `unshifted_codepoint` to drive ghostty's encoder
+        // for both .char and named keys. A future iteration can map
+        // each NamedKey to its expected raw scancode.
+        _ = ghosttyPhysical(event.key)
         var textPtr: UnsafePointer<CChar>? = nil
         var unshifted: UInt32 = 0
         if case .char(let c) = event.key {
