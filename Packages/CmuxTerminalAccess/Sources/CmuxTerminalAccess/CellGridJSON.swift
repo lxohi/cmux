@@ -1,4 +1,3 @@
-import CmuxTerminalAccess
 import Foundation
 
 /// JSON wire-encoder for ``CmuxTerminalAccess/CellGrid``.
@@ -16,7 +15,7 @@ import Foundation
 /// is consumed only by the HTTP route layer. Tests assert the literal
 /// JSON output using `JSONSerialization` with `.sortedKeys` so the
 /// output is deterministic.
-enum CellGridJSON {
+public enum CellGridJSON {
     /// Encodes `g` as the `{"format":"cells", ...}` envelope.
     ///
     /// - Parameters:
@@ -24,7 +23,7 @@ enum CellGridJSON {
     ///     ``CmuxTerminalAccess/SurfaceProvider/readCells(surface:region:)``.
     ///   - region: The wire string for the requested region (e.g.
     ///     `"viewport"` / `"screen"` / `"scrollback"`).
-    static func encode(_ g: CellGrid, region: String) -> [String: Any] {
+    public static func encode(_ g: CellGrid, region: String) -> [String: Any] {
         [
             "format": "cells",
             "region": region,

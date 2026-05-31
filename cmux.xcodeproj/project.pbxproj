@@ -74,7 +74,6 @@
 		A5007422 /* BrowserWebAuthnSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5007423 /* BrowserWebAuthnSupport.swift */; };
 		A5001534 /* BrowserWindowPortal.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001533 /* BrowserWindowPortal.swift */; };
 		C0DE35530000000000000101 /* BundledCLILinkageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE35530000000000000102 /* BundledCLILinkageTests.swift */; };
-		8E7743000000000000000015 /* CellGridJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7743000000000000000016 /* CellGridJSON.swift */; };
 		8E7743000000000000000017 /* CellGridJSONTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7743000000000000000018 /* CellGridJSONTests.swift */; };
 		F3000000A1B2C3D4E5F60718 /* CJKIMEInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3000001A1B2C3D4E5F60718 /* CJKIMEInputTests.swift */; };
 		D3571002A1B2C3D4E5F60718 /* CJKIMEMarkedSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3571003A1B2C3D4E5F60718 /* CJKIMEMarkedSelectionTests.swift */; };
@@ -712,7 +711,6 @@
 		A5007423 /* BrowserWebAuthnSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Panels/BrowserWebAuthnSupport.swift; sourceTree = "<group>"; };
 		A5001533 /* BrowserWindowPortal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserWindowPortal.swift; sourceTree = "<group>"; };
 		C0DE35530000000000000102 /* BundledCLILinkageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundledCLILinkageTests.swift; sourceTree = "<group>"; };
-		8E7743000000000000000016 /* CellGridJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CellGridJSON.swift; sourceTree = "<group>"; };
 		8E7743000000000000000018 /* CellGridJSONTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CellGridJSONTests.swift; sourceTree = "<group>"; };
 		F3000001A1B2C3D4E5F60718 /* CJKIMEInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CJKIMEInputTests.swift; sourceTree = "<group>"; };
 		D3571003A1B2C3D4E5F60718 /* CJKIMEMarkedSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CJKIMEMarkedSelectionTests.swift; sourceTree = "<group>"; };
@@ -1288,7 +1286,6 @@
 			isa = PBXGroup;
 			children = (
 				8E7740000000000000000004 /* AppSurfaceProvider.swift */,
-				8E7743000000000000000016 /* CellGridJSON.swift */,
 				8E7740000000000000000018 /* HostAllowlist.swift */,
 				8E7740000000000000000014 /* HTTPAuth.swift */,
 				8E774300000000000000000C /* HTTPControlRoutes.swift */,
@@ -2261,7 +2258,6 @@
 				A5008371 /* BrowserSearchOverlay.swift in Sources */,
 					A5007422 /* BrowserWebAuthnSupport.swift in Sources */,
 				A5001534 /* BrowserWindowPortal.swift in Sources */,
-				8E7743000000000000000015 /* CellGridJSON.swift in Sources */,
 				C46790000000000000000003 /* CLIForwardingLaunchRouter.swift in Sources */,
 					C10D51700000000000000002 /* ClosedItemHistory.swift in Sources */,
 				C10D00010000000000000001 /* CloudVMActionLauncher.swift in Sources */,

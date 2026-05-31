@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import cmux
+@testable import CmuxTerminalAccess
 
 @Suite struct CellGridJSONTests {
     @Test func encodesWideSpacerSemanticHyperlinkUnderline() throws {
