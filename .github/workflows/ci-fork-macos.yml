@@ -34,12 +34,16 @@ jobs:
 
   app-target-build-and-test:
     # cmux uses Swift 6 features (file-level `nonisolated`, etc.) that
-    # require Xcode 26 / Swift 6.x. GitHub-hosted macos-latest currently
-    # ships Xcode 16. This job runs only if Xcode 26 is present on the
+    # require Xcode 26 / Swift 6.x. GitHub-hosted macos-latest ships
+    # Xcode 26.x. This job runs only if Xcode 26 is present on the
     # runner; otherwise it skips with a clear message rather than
     # spamming a long red log.
+    #
+    # First clean build on a fresh runner takes ~50-70 minutes (full
+    # cmux app + SPM deps + GhosttyKit cache fetch); cache the SPM +
+    # derived data dirs across runs so subsequent runs are minutes.
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,6 +73,22 @@ jobs:
           key: zig-packages-${{ hashFiles('ghostty/build.zig.zon') }}
           restore-keys: zig-packages-
 
+      - name: Restore SPM clone cache
+        if: steps.xcode26.outputs.skip == 'false'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/cmux-fork-spm
+          key: cmux-fork-spm-${{ hashFiles('cmux.xcodeproj/project.pbxproj') }}
+          restore-keys: cmux-fork-spm-
+
+      - name: Restore derived data cache
+        if: steps.xcode26.outputs.skip == 'false'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/cmux-fork-derived
+          key: cmux-fork-derived-${{ github.sha }}
+          restore-keys: cmux-fork-derived-
+
       - name: Install zig (pinned 0.15.2)
         if: steps.xcode26.outputs.skip == 'false'
         run: ./scripts/install-zig-ci.sh
@@ -78,10 +98,9 @@ jobs:
         run: ./scripts/ensure-ghosttykit.sh
         timeout-minutes: 30
 
-      - name: Build cmux-unit (build-for-testing, fresh SPM resolve)
+      - name: Build cmux-unit (build-for-testing)
         if: steps.xcode26.outputs.skip == 'false'
         run: |
-          rm -rf /tmp/cmux-fork-spm /tmp/cmux-fork-derived
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
             -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
