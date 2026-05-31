@@ -88,6 +88,7 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
             CMUX_SKIP_ZIG_BUILD=1 \
+            SWIFT_ENABLE_EXPLICIT_MODULES=NO \
             build-for-testing
 
       - name: Run cmux-unit tests (integration suite)
@@ -99,4 +100,5 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
             CMUX_SKIP_ZIG_BUILD=1 \
+            SWIFT_ENABLE_EXPLICIT_MODULES=NO \
             test-without-building
