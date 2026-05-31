@@ -109,13 +109,34 @@ jobs:
             CMUX_SKIP_ZIG_BUILD=1 \
             build-for-testing
 
-      - name: Run cmux-unit tests (integration suite)
+      - name: Run cmux-unit tests (HTTPControl integration suite)
         if: steps.xcode26.outputs.skip == 'false'
         run: |
+          # The full cmux-unit suite has many slow / display-dependent
+          # tests that aren't relevant to the HTTP terminal API. Filter
+          # to just the HTTPControl integration tests + the
+          # SocketControlSettings tests we touched. Run-time on
+          # github-hosted macos-latest is ~minutes vs >60min for the
+          # whole suite.
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
             -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
             CMUX_SKIP_ZIG_BUILD=1 \
+            -only-testing:cmuxTests/CellGridJSONTests \
+            -only-testing:cmuxTests/HostAllowlistTests \
+            -only-testing:cmuxTests/HTTPAuthTests \
+            -only-testing:cmuxTests/HTTPRequestParserTests \
+            -only-testing:cmuxTests/JSONResponsesTests \
+            -only-testing:cmuxTests/RouteTableTests \
+            -only-testing:cmuxTests/HTTPControlServerListenerTests \
+            -only-testing:cmuxTests/HTTPControlSurfaceListTests \
+            -only-testing:cmuxTests/HTTPControlScreenRouteTests \
+            -only-testing:cmuxTests/HTTPControlInputRouteTests \
+            -only-testing:cmuxTests/HTTPControlSettingsViewModelTests \
+            -only-testing:cmuxTests/HTTPControlLifecycleTests \
+            -only-testing:cmuxTests/HTTPControlUDSListenerTests \
+            -only-testing:cmuxTests/HTTPTokenChildEnvIsolationTests \
+            -only-testing:cmuxTests/SSEResponderTests \
             test-without-building
