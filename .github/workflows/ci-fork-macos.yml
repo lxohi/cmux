@@ -260,11 +260,22 @@ jobs:
           # xcodebuild at the 8-min deadline. Determine pass/fail by
           # scanning the streamed Swift Testing output for any
           # `✘ Test` line that isn't in a `.skipped` group.
+          #
+          # `grep | wc -l` returns 1 when grep finds zero matches; the
+          # workflow shell uses `-eo pipefail` so that bare invocation
+          # would terminate the script. We disable -e around the
+          # counters and re-enable afterwards.
           echo "------ xcodebuild exit: $xb_exit ------"
-          fail_count=$(grep -E "^✘ Test " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
-          fail_suite_count=$(grep -E "^✘ Suite " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
-          skipped_count=$(grep -E "^➜ Test " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
-          pass_count=$(grep -E "^✔ Test " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
+          set +e
+          fail_count=$(grep -cE "^✘ Test " "$RUNNER_TEMP/cmux-test-stdout.log")
+          [ -z "$fail_count" ] && fail_count=0
+          fail_suite_count=$(grep -cE "^✘ Suite " "$RUNNER_TEMP/cmux-test-stdout.log")
+          [ -z "$fail_suite_count" ] && fail_suite_count=0
+          skipped_count=$(grep -cE "^➜ Test " "$RUNNER_TEMP/cmux-test-stdout.log")
+          [ -z "$skipped_count" ] && skipped_count=0
+          pass_count=$(grep -cE "^✔ Test " "$RUNNER_TEMP/cmux-test-stdout.log")
+          [ -z "$pass_count" ] && pass_count=0
+          set -e
           echo "------ run summary: $pass_count passed, $fail_count failed, $skipped_count skipped, $fail_suite_count suite failures ------"
           if [ "$fail_count" -gt 0 ] || [ "$fail_suite_count" -gt 0 ]; then
             echo "Real test failures detected"
