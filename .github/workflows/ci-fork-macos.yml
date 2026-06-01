@@ -203,6 +203,11 @@ jobs:
           # server's read callbacks to fire 30+ seconds after accept.
           # All other HTTPControl test coverage (parser, auth,
           # allowlist, UDS, route table, settings, etc.) still runs.
+          # Export the skip env var so it reaches the test process
+          # (xcodebuild passes the host process's environment through
+          # to the launched app's environment). The KEY=VALUE-in-args
+          # form sets a BUILD setting, not a runtime env var.
+          export CMUX_SKIP_HTTP_TCP_INTEGRATION=1
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
             -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
@@ -211,7 +216,6 @@ jobs:
             -derivedDataPath /tmp/cmux-fork-derived \
             -resultBundlePath "$RUNNER_TEMP/cmux-test-result.xcresult" \
             CMUX_SKIP_ZIG_BUILD=1 \
-            CMUX_SKIP_HTTP_TCP_INTEGRATION=1 \
             -only-testing:cmuxTests/CellGridJSONTests \
             -only-testing:cmuxTests/HostAllowlistTests \
             -only-testing:cmuxTests/HTTPAuthTests \
