@@ -57,10 +57,20 @@ final class HTTPControlTCPListener: @unchecked Sendable {
 
         var addr = sockaddr_in()
         memset(&addr, 0, MemoryLayout<sockaddr_in>.size)
+        // macOS sockaddr_in carries sin_len before sin_family — must
+        // be set explicitly to allow some BSD paths to validate it.
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = in_port_t(requestedPort).bigEndian
-        // 127.0.0.1 in network byte order.
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        // 127.0.0.1 via inet_pton (modern API; bypasses any
+        // legacy-deprecated `inet_addr` bridging surprises).
+        var loopback = in_addr()
+        let ptonRC = inet_pton(AF_INET, "127.0.0.1", &loopback)
+        guard ptonRC == 1 else {
+            close(s)
+            throw HTTPControlTCPListenerError.bindFailed(errno)
+        }
+        addr.sin_addr = loopback
 
         let bindRC = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -79,13 +89,14 @@ final class HTTPControlTCPListener: @unchecked Sendable {
         }
 
         // Resolve the actual bound port (may differ from requestedPort
-        // when 0 was passed).
+        // when 0 was passed). Use a separate scope for `blen` to avoid
+        // exclusive-access overlap with the sockaddr pointer.
         var bound = sockaddr_in()
         memset(&bound, 0, MemoryLayout<sockaddr_in>.size)
         var blen = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let nameRC = withUnsafeMutablePointer(to: &bound) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                getsockname(s, $0, &blen)
+        let nameRC: Int32 = withUnsafeMutablePointer(to: &bound) { boundPtr in
+            boundPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                getsockname(s, sockPtr, &blen)
             }
         }
         guard nameRC == 0 else {
@@ -94,6 +105,10 @@ final class HTTPControlTCPListener: @unchecked Sendable {
             throw HTTPControlTCPListenerError.getsocknameFailed(e)
         }
         let resolvedPort = UInt16(bigEndian: bound.sin_port)
+        guard resolvedPort != 0 else {
+            close(s)
+            throw HTTPControlTCPListenerError.resolvedPortZero
+        }
 
         let src = DispatchSource.makeReadSource(fileDescriptor: s, queue: queue)
         src.setEventHandler { [weak self] in
@@ -140,4 +155,8 @@ enum HTTPControlTCPListenerError: Error {
     case bindFailed(Int32)
     case listenFailed(Int32)
     case getsocknameFailed(Int32)
+    /// `getsockname()` reported port 0 after a successful bind+listen
+    /// — should never happen on a real kernel; surfaces as a hard
+    /// error so the caller can fall back / report cleanly.
+    case resolvedPortZero
 }
