@@ -40,7 +40,7 @@ public final class HTTPControlServer: @unchecked Sendable {
     public let streamRegistry: StreamConnectionRegistry
 
     private let lock = NSLock()
-    private var tcpListener: NWListener?
+    private var tcpListener: HTTPControlTCPListener?
     private var udsListener: HTTPControlUDSListener?
     private let queue = DispatchQueue(
         label: "cmux.http-control",
@@ -97,84 +97,27 @@ public final class HTTPControlServer: @unchecked Sendable {
     /// - Returns: The bound TCP port.
     @discardableResult
     public func startTCP(port: UInt16) throws -> UInt16 {
-        // Bind explicitly to 127.0.0.1 via requiredLocalEndpoint. The
-        // cmux pattern is in cmuxTests/BrowserConfigTests.swift's loopback
-        // server. We mirror it as closely as possible to make the
-        // listener behavior predictable across macOS runner generations.
-        let parameters = NWParameters.tcp
-        // For ephemeral binding (port 0) use the `.any` sentinel —
-        // `Port(rawValue: 0)` returns `Port(0)`, which Network.framework
-        // treats as a concrete-but-invalid port and silently never
-        // reaches `.ready`.
-        let portEndpoint: NWEndpoint.Port =
-            port == 0 ? .any : (NWEndpoint.Port(rawValue: port) ?? .any)
-        parameters.requiredLocalEndpoint = .hostPort(
-            host: NWEndpoint.Host("127.0.0.1"),
-            port: portEndpoint
-        )
-        let listener = try NWListener(using: parameters)
-        listener.newConnectionHandler = { [weak self] conn in
-            self?.accept(conn)
+        // Use a POSIX socket(AF_INET, SOCK_STREAM) bound to 127.0.0.1
+        // rather than NWListener. NWListener with
+        // `requiredLocalEndpoint = .hostPort(host: 127.0.0.1, port: .any)`
+        // is documented to bind an ephemeral port, but on the
+        // github-hosted macOS runner family it silently reports port 0
+        // even after `.ready`, so clients fail with EADDRNOTAVAIL.
+        // The POSIX path matches the existing UDS listener; the
+        // accepted fd is wrapped in `DispatchIO` via ``acceptRawFD``.
+        let listener = HTTPControlTCPListener(
+            port: port,
+            queue: queue
+        ) { [weak self] cfd in
+            guard let self else { Darwin.close(cfd); return }
+            self.acceptRawFD(cfd, port: self.boundPort)
         }
-        let ready = DispatchSemaphore(value: 0)
-        let listenerErrorBox = NSLock()
-        var listenerError: NWError?
-        listener.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                ready.signal()
-            case .failed(let error):
-                listenerErrorBox.lock()
-                listenerError = error
-                listenerErrorBox.unlock()
-                ready.signal()
-            default:
-                break
-            }
-        }
-        listener.start(queue: queue)
-        guard ready.wait(timeout: .now() + 5) == .success else {
-            listener.cancel()
-            throw NSError(
-                domain: "cmux.HTTPControlServer",
-                code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "TCP listener did not reach .ready within 5s "
-                        + "(port: \(port))"
-                ]
-            )
-        }
-        listenerErrorBox.lock()
-        let err = listenerError
-        listenerErrorBox.unlock()
-        if let err {
-            listener.cancel()
-            throw NSError(
-                domain: "cmux.HTTPControlServer",
-                code: 2,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "TCP listener entered .failed: \(err)"
-                ]
-            )
-        }
-        guard let resolvedPort = listener.port?.rawValue else {
-            listener.cancel()
-            throw NSError(
-                domain: "cmux.HTTPControlServer",
-                code: 3,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "TCP listener became .ready without a port"
-                ]
-            )
-        }
+        try listener.start()
         lock.lock()
         self.tcpListener = listener
-        self._boundPort = resolvedPort
+        self._boundPort = listener.port
         lock.unlock()
-        return resolvedPort
+        return listener.port
     }
 
     /// Binds an AF_UNIX listener at `path`. Mode `0600`. D12 — uses
@@ -190,7 +133,7 @@ public final class HTTPControlServer: @unchecked Sendable {
             queue: queue
         ) { [weak self] cfd in
             guard let self else { Darwin.close(cfd); return }
-            self.acceptRawFD(cfd)
+            self.acceptRawFD(cfd, port: 0)
         }
         try listener.start()
         lock.lock()
@@ -207,7 +150,7 @@ public final class HTTPControlServer: @unchecked Sendable {
         udsListener = nil
         _boundPort = 0
         lock.unlock()
-        l?.cancel()
+        l?.stop()
         u?.stop()
     }
 
@@ -347,12 +290,17 @@ public final class HTTPControlServer: @unchecked Sendable {
 
     // MARK: - UDS accept path
 
-    /// Wraps an accepted UDS client fd in `DispatchIO`, parses one
+    /// Wraps an accepted client fd in `DispatchIO`, parses one
     /// request, dispatches it through the route table, and writes
-    /// the response. Mirrors ``handle(_:connection:)`` for TCP; the
-    /// UDS path uses port `0` for the Host allowlist (clients send
-    /// `localhost:0`).
-    private func acceptRawFD(_ fd: Int32) {
+    /// the response.
+    ///
+    /// - Parameters:
+    ///   - fd: Accepted client file descriptor. Ownership transfers
+    ///     to the `DispatchIO` cleanup handler.
+    ///   - port: TCP port for the Host allowlist evaluation. Pass `0`
+    ///     for the UDS transport (UDS clients send `Host: localhost:0`)
+    ///     and the actual bound port for TCP.
+    private func acceptRawFD(_ fd: Int32, port: UInt16) {
         let io = DispatchIO(
             type: .stream,
             fileDescriptor: fd,
@@ -361,10 +309,10 @@ public final class HTTPControlServer: @unchecked Sendable {
         )
         io.setLimit(lowWater: 1)
         let state = ConnectionState()
-        readUDS(io: io, state: state)
+        readUDS(io: io, state: state, port: port)
     }
 
-    private func readUDS(io: DispatchIO, state: ConnectionState) {
+    private func readUDS(io: DispatchIO, state: ConnectionState, port: UInt16) {
         io.read(offset: 0, length: 64 * 1024, queue: queue) { [weak self] _, data, error in
             guard let self else { return }
             if let data, !data.isEmpty {
@@ -372,10 +320,10 @@ public final class HTTPControlServer: @unchecked Sendable {
                 do {
                     switch try state.parser.next() {
                     case .complete(let req):
-                        Task { await self.handleUDS(req, io: io) }
+                        Task { await self.handleUDS(req, io: io, port: port) }
                         return
                     case .need:
-                        self.readUDS(io: io, state: state)
+                        self.readUDS(io: io, state: state, port: port)
                     }
                 } catch HTTPParseError.bodyTooLarge,
                         HTTPParseError.headerTooLarge {
@@ -398,16 +346,14 @@ public final class HTTPControlServer: @unchecked Sendable {
         }
     }
 
-    private func handleUDS(_ req: HTTPRequest, io: DispatchIO) async {
+    private func handleUDS(_ req: HTTPRequest, io: DispatchIO, port: UInt16) async {
         guard isEnabled() else {
             writeUDS(JSONResponses.error(.featureDisabled), io: io)
             return
         }
-        // UDS has no real Host concept, but the parser still required
-        // an HTTP/1.1 Host header. We synthesise port 0 for the
-        // allowlist and let clients send `Host: localhost:0` or
-        // `Host: 127.0.0.1:0`.
-        let allowlist = hostAllowlistFor(0)
+        // For UDS (port == 0) clients send `Host: localhost:0`; for TCP
+        // (port == bound TCP port) clients send `Host: 127.0.0.1:<port>`.
+        let allowlist = hostAllowlistFor(port)
         switch allowlist.evaluate(
             host: req.header("host"),
             origin: req.header("origin")
