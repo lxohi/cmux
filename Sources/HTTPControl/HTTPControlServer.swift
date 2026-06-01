@@ -301,6 +301,9 @@ public final class HTTPControlServer: @unchecked Sendable {
     ///     for the UDS transport (UDS clients send `Host: localhost:0`)
     ///     and the actual bound port for TCP.
     private func acceptRawFD(_ fd: Int32, port: UInt16) {
+        FileHandle.standardError.write(
+            Data("[cmux-http-debug] acceptRawFD fd=\(fd) port=\(port)\n".utf8)
+        )
         let io = DispatchIO(
             type: .stream,
             fileDescriptor: fd,
@@ -313,7 +316,10 @@ public final class HTTPControlServer: @unchecked Sendable {
     }
 
     private func readUDS(io: DispatchIO, state: ConnectionState, port: UInt16) {
-        io.read(offset: 0, length: 64 * 1024, queue: queue) { [weak self] _, data, error in
+        io.read(offset: 0, length: 64 * 1024, queue: queue) { [weak self] done, data, error in
+            FileHandle.standardError.write(
+                Data("[cmux-http-debug] read cb done=\(done) data=\(data?.count ?? -1) err=\(error)\n".utf8)
+            )
             guard let self else { return }
             if let data, !data.isEmpty {
                 state.parser.feed(Data(data))
@@ -347,6 +353,9 @@ public final class HTTPControlServer: @unchecked Sendable {
     }
 
     private func handleUDS(_ req: HTTPRequest, io: DispatchIO, port: UInt16) async {
+        FileHandle.standardError.write(
+            Data("[cmux-http-debug] handleUDS method=\(req.method) path=\(req.path) port=\(port)\n".utf8)
+        )
         guard isEnabled() else {
             writeUDS(JSONResponses.error(.featureDisabled), io: io)
             return
@@ -393,10 +402,16 @@ public final class HTTPControlServer: @unchecked Sendable {
         head += "Connection: close\r\n\r\n"
         var bytes = Data(head.utf8)
         bytes.append(resp.body)
+        FileHandle.standardError.write(
+            Data("[cmux-http-debug] writeUDS status=\(resp.status) bytes=\(bytes.count)\n".utf8)
+        )
         let dd = bytes.withUnsafeBytes { raw in
             DispatchData(bytes: raw)
         }
-        io.write(offset: 0, data: dd, queue: queue) { _, _, _ in
+        io.write(offset: 0, data: dd, queue: queue) { done, _, error in
+            FileHandle.standardError.write(
+                Data("[cmux-http-debug] write cb done=\(done) err=\(error)\n".utf8)
+            )
             io.close(flags: .stop)
         }
     }
