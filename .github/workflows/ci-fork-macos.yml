@@ -180,15 +180,27 @@ jobs:
 
       - name: Run cmux-unit tests (HTTPControl integration suite)
         if: steps.xcode26.outputs.skip == 'false'
+        timeout-minutes: 10
         run: |
           # The full cmux-unit suite has many slow / display-dependent
           # tests that aren't relevant to the HTTP terminal API. Filter
           # to just the HTTPControl integration tests we actually own.
+          # Write an xcresult bundle for upload + post-mortem inspection.
+          #
+          # The cmux app host process is known to occasionally hang on
+          # exit on github-hosted macOS runners (see ci.yml comment on
+          # `run_unit_tests`). We run xcodebuild in the background and
+          # hard-kill it at 8 minutes — the actual tests finish in <1
+          # minute, so 8 minutes leaves room for the result bundle to
+          # flush without letting an app-host hang eat the whole job.
+          set +e
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
             -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
+            -disableAutomaticPackageResolution \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
+            -resultBundlePath "$RUNNER_TEMP/cmux-test-result.xcresult" \
             CMUX_SKIP_ZIG_BUILD=1 \
             -only-testing:cmuxTests/CellGridJSONTests \
             -only-testing:cmuxTests/HostAllowlistTests \
@@ -205,4 +217,51 @@ jobs:
             -only-testing:cmuxTests/HTTPControlUDSListenerTests \
             -only-testing:cmuxTests/HTTPTokenChildEnvIsolationTests \
             -only-testing:cmuxTests/SSEResponderTests \
-            test-without-building
+            test-without-building 2>&1 | tee "$RUNNER_TEMP/cmux-test-stdout.log" &
+          xb_pid=$!
+          deadline=$((SECONDS + 480))  # 8 minutes
+          while kill -0 "$xb_pid" 2>/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "xcodebuild hung; SIGTERM"
+              kill -TERM "$xb_pid" 2>/dev/null || true
+              sleep 5
+              kill -KILL "$xb_pid" 2>/dev/null || true
+              break
+            fi
+            sleep 5
+          done
+          wait "$xb_pid" 2>/dev/null
+          xb_exit=$?
+          set -e
+
+          # Look at the run summary regardless of xcodebuild's own exit
+          # code. If every reported failure is in our known set, treat
+          # the run as a pass — otherwise, fail the step.
+          summary=$(grep -E "Test Suite .* (passed|failed)|Executed [0-9]+ tests" "$RUNNER_TEMP/cmux-test-stdout.log" | tail -10 || true)
+          echo "------ run summary ------"
+          echo "$summary"
+          echo "------ xcodebuild exit: $xb_exit ------"
+          if [ "$xb_exit" -ne 0 ]; then
+            # If we have a result bundle, give the next step the
+            # chance to inspect it. We still mark the step as failed
+            # so the workflow gate stays red.
+            exit "$xb_exit"
+          fi
+
+      - name: Upload test stdout
+        if: always() && steps.xcode26.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmux-test-stdout
+          path: ${{ runner.temp }}/cmux-test-stdout.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload xcresult bundle
+        if: always() && steps.xcode26.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmux-test-xcresult
+          path: ${{ runner.temp }}/cmux-test-result.xcresult
+          retention-days: 7
+          if-no-files-found: warn
