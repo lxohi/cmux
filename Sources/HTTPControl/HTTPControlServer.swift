@@ -355,35 +355,35 @@ public final class HTTPControlServer: @unchecked Sendable {
                     switch try state.parser.next() {
                     case .complete(let req):
                         state.dispatched = true
-                        // Swift Concurrency `Task { ... }` continuations don't
-                        // schedule reliably from the read callback under the
-                        // cmux DEV app's xctest host on github-hosted runners
-                        // (Tasks are created but the body never runs). Dispatch
-                        // onto a background queue and use a semaphore to bridge
-                        // back to the synchronous path.
-                        DispatchQueue.global(qos: .userInitiated).async {
+                        // Use Task.detached (not Task {}) — the
+                        // surrounding closure is non-isolated, so a
+                        // plain Task inherits no actor but can fail
+                        // to schedule under the cmux DEV xctest host
+                        // on github-hosted runners. Task.detached
+                        // explicitly runs on the global concurrent
+                        // executor. Do NOT bridge back to a dispatch
+                        // queue via semaphore — sem.wait() blocks a
+                        // global queue worker, and with many
+                        // concurrent test connections the pool gets
+                        // saturated, starving subsequent io.read
+                        // callbacks. Instead, the Task hands the
+                        // response straight to writeUDS, which
+                        // schedules io.write asynchronously.
+                        FileHandle.standardError.write(
+                            Data("[cmux-http-debug] complete; scheduling task port=\(port)\n".utf8)
+                        )
+                        Task.detached(priority: .userInitiated) { [weak self] in
+                            guard let self else { return }
                             FileHandle.standardError.write(
-                                Data("[cmux-http-debug] dispatch entered\n".utf8)
+                                Data("[cmux-http-debug] Task.detached body port=\(port)\n".utf8)
                             )
-                            let sem = DispatchSemaphore(value: 0)
-                            var resp: JSONResponses.Response?
-                            Task.detached(priority: .userInitiated) {
-                                FileHandle.standardError.write(
-                                    Data("[cmux-http-debug] Task.detached body\n".utf8)
-                                )
-                                let r = await self.computeResponse(
-                                    req: req, port: port
-                                )
-                                resp = r
-                                sem.signal()
-                            }
-                            sem.wait()
-                            if let resp {
-                                FileHandle.standardError.write(
-                                    Data("[cmux-http-debug] writing resp \(resp.status)\n".utf8)
-                                )
-                                self.writeUDS(resp, io: io)
-                            }
+                            let resp = await self.computeResponse(
+                                req: req, port: port
+                            )
+                            FileHandle.standardError.write(
+                                Data("[cmux-http-debug] writing resp \(resp.status)\n".utf8)
+                            )
+                            self.writeUDS(resp, io: io)
                         }
                         return
                     case .need:
