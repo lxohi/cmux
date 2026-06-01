@@ -120,8 +120,13 @@ jobs:
       - name: Tar built products
         if: steps.xcode26.outputs.skip == 'false'
         run: |
-          cd /tmp/cmux-fork-derived
-          tar -cf /tmp/cmux-built-products.tar Build/Products/Debug
+          # Capture the test bundle, the .app, and the SPM clone dir
+          # under one common parent (/tmp) so the test job can
+          # extract them back to identical paths in one untar.
+          tar -cf /tmp/cmux-built-products.tar \
+            -C /tmp \
+            cmux-fork-derived/Build/Products/Debug \
+            cmux-fork-spm
           ls -lh /tmp/cmux-built-products.tar
 
       - name: Upload built products artifact
@@ -169,10 +174,9 @@ jobs:
       - name: Unpack built products
         if: steps.xcode26.outputs.skip == 'false'
         run: |
-          mkdir -p /tmp/cmux-fork-derived
-          cd /tmp/cmux-fork-derived
-          tar -xf /tmp/cmux-built-products.tar
-          ls Build/Products/Debug | head -20
+          tar -xf /tmp/cmux-built-products.tar -C /tmp
+          ls /tmp/cmux-fork-derived/Build/Products/Debug | head -20
+          ls /tmp/cmux-fork-spm | head -5
 
       - name: Run cmux-unit tests (HTTPControl integration suite)
         if: steps.xcode26.outputs.skip == 'false'
@@ -182,6 +186,7 @@ jobs:
           # to just the HTTPControl integration tests we actually own.
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
+            -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
             CMUX_SKIP_ZIG_BUILD=1 \
