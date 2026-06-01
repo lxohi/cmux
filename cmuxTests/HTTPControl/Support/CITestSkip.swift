@@ -10,12 +10,18 @@ import Foundation
 /// the user's dev box and on warp.dev runners; only github-hosted
 /// macos-latest reliably hits the contention.
 ///
-/// CI sets `CMUX_SKIP_HTTP_TCP_INTEGRATION=1` for github-hosted
-/// runs; locally the env var is unset and the tests run normally.
+/// Detection uses a sentinel file at
+/// `/tmp/cmux-ci-flags/skip-http-tcp-integration` rather than an env
+/// var because env vars don't reliably propagate from xcodebuild into
+/// the launched test runner process. CI touches that file before
+/// invoking xcodebuild; locally the file is absent and the tests
+/// run normally.
 enum CITestSkip {
     /// True when the heavy TCP/loopback HTTP integration suites
     /// should be marked disabled for the current environment.
     static var httpTCPIntegrationDisabled: Bool {
-        ProcessInfo.processInfo.environment["CMUX_SKIP_HTTP_TCP_INTEGRATION"] != nil
+        FileManager.default.fileExists(
+            atPath: "/tmp/cmux-ci-flags/skip-http-tcp-integration"
+        )
     }
 }
