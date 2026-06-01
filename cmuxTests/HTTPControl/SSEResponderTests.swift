@@ -22,10 +22,15 @@ import Testing
         let port: UInt16
 
         init() throws {
-            let params = NWParameters.tcp
-            params.acceptLocalOnly = true
-            params.requiredInterfaceType = .loopback
-            let listener = try NWListener(using: params, on: .any)
+            let tcpOptions = NWProtocolTCP.Options()
+            tcpOptions.noDelay = true
+            let params = NWParameters(tls: nil, tcp: tcpOptions)
+            params.allowLocalEndpointReuse = true
+            params.requiredLocalEndpoint = .hostPort(
+                host: NWEndpoint.Host("127.0.0.1"),
+                port: .any
+            )
+            let listener = try NWListener(using: params)
             self.listener = listener
             let ready = DispatchSemaphore(value: 0)
             listener.stateUpdateHandler = { state in
