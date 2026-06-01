@@ -165,6 +165,12 @@ public final class HTTPControlServer: @unchecked Sendable {
             maxHeaderBytes: 16 * 1024,
             maxBodyBytes: 1 << 20
         )
+        /// Set to true once a complete request has been parsed and
+        /// the handler has been dispatched. Subsequent DispatchIO
+        /// callbacks (notably the done=true completion callback) must
+        /// not re-trigger handling or close the io while the response
+        /// write is in flight.
+        var dispatched: Bool = false
     }
 
     private func read(conn: NWConnection, state: ConnectionState) {
@@ -318,14 +324,22 @@ public final class HTTPControlServer: @unchecked Sendable {
     private func readUDS(io: DispatchIO, state: ConnectionState, port: UInt16) {
         io.read(offset: 0, length: 64 * 1024, queue: queue) { [weak self] done, data, error in
             FileHandle.standardError.write(
-                Data("[cmux-http-debug] read cb done=\(done) data=\(data?.count ?? -1) err=\(error)\n".utf8)
+                Data("[cmux-http-debug] read cb done=\(done) data=\(data?.count ?? -1) err=\(error) parsed=\(state.dispatched)\n".utf8)
             )
             guard let self else { return }
+            // Already dispatched the request? Ignore subsequent
+            // callbacks (DispatchIO fires once with data then again
+            // with done=true; closing the io on the second callback
+            // would race the response write).
+            if state.dispatched {
+                return
+            }
             if let data, !data.isEmpty {
                 state.parser.feed(Data(data))
                 do {
                     switch try state.parser.next() {
                     case .complete(let req):
+                        state.dispatched = true
                         // Swift Concurrency `Task { ... }` continuations don't
                         // schedule reliably from the read callback under the
                         // cmux DEV app's xctest host on github-hosted runners
@@ -358,15 +372,27 @@ public final class HTTPControlServer: @unchecked Sendable {
                         }
                         return
                     case .need:
-                        self.readUDS(io: io, state: state, port: port)
+                        if done {
+                            // Read stream closed without a complete request.
+                            self.writeUDS(
+                                JSONResponses.error(
+                                    .badRequest(reason: "incomplete request")
+                                ),
+                                io: io
+                            )
+                        } else {
+                            self.readUDS(io: io, state: state, port: port)
+                        }
                     }
                 } catch HTTPParseError.bodyTooLarge,
                         HTTPParseError.headerTooLarge {
+                    state.dispatched = true
                     self.writeUDS(
                         JSONResponses.error(.payloadTooLarge),
                         io: io
                     )
                 } catch {
+                    state.dispatched = true
                     self.writeUDS(
                         JSONResponses.error(
                             .badRequest(reason: "malformed request")
@@ -374,10 +400,13 @@ public final class HTTPControlServer: @unchecked Sendable {
                         io: io
                     )
                 }
-            } else {
-                // EOF or read error — close the fd via DispatchIO cleanup.
+            } else if done && error != 0 {
+                // Hard read error — close.
                 io.close(flags: .stop)
             }
+            // For done=true with no data and no error, leave the io
+            // open: the response write may still be in flight on the
+            // background queue.
         }
     }
 
