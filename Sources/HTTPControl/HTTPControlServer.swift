@@ -97,43 +97,84 @@ public final class HTTPControlServer: @unchecked Sendable {
     /// - Returns: The bound TCP port.
     @discardableResult
     public func startTCP(port: UInt16) throws -> UInt16 {
-        // Bind explicitly to 127.0.0.1 via requiredLocalEndpoint.
-        // This matches the established cmux pattern (see
-        // makeLoopbackListener in Workspace.swift) and is more
-        // deterministic than `requiredInterfaceType = .loopback`,
-        // which can fail to enumerate lo0 under xctest sandbox on
-        // github-hosted macOS runners.
-        let tcpOptions = NWProtocolTCP.Options()
-        tcpOptions.noDelay = true
-        let params = NWParameters(tls: nil, tcp: tcpOptions)
-        params.allowLocalEndpointReuse = true
+        // Bind explicitly to 127.0.0.1 via requiredLocalEndpoint. The
+        // cmux pattern is in cmuxTests/BrowserConfigTests.swift's loopback
+        // server. We mirror it as closely as possible to make the
+        // listener behavior predictable across macOS runner generations.
+        let parameters = NWParameters.tcp
         // For ephemeral binding (port 0) use the `.any` sentinel —
         // `Port(rawValue: 0)` returns `Port(0)`, which Network.framework
         // treats as a concrete-but-invalid port and silently never
-        // reaches `.ready`. See cmuxTests/BrowserConfigTests.swift
-        // for the canonical loopback listener pattern.
+        // reaches `.ready`.
         let portEndpoint: NWEndpoint.Port =
             port == 0 ? .any : (NWEndpoint.Port(rawValue: port) ?? .any)
-        params.requiredLocalEndpoint = .hostPort(
+        parameters.requiredLocalEndpoint = .hostPort(
             host: NWEndpoint.Host("127.0.0.1"),
             port: portEndpoint
         )
-        let listener = try NWListener(using: params)
+        let listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { [weak self] conn in
             self?.accept(conn)
         }
         let ready = DispatchSemaphore(value: 0)
+        let listenerErrorBox = NSLock()
+        var listenerError: NWError?
         listener.stateUpdateHandler = { state in
-            if case .ready = state { ready.signal() }
+            switch state {
+            case .ready:
+                ready.signal()
+            case .failed(let error):
+                listenerErrorBox.lock()
+                listenerError = error
+                listenerErrorBox.unlock()
+                ready.signal()
+            default:
+                break
+            }
         }
         listener.start(queue: queue)
-        _ = ready.wait(timeout: .now() + 2)
-        let resolved = listener.port?.rawValue ?? port
+        guard ready.wait(timeout: .now() + 5) == .success else {
+            listener.cancel()
+            throw NSError(
+                domain: "cmux.HTTPControlServer",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "TCP listener did not reach .ready within 5s "
+                        + "(port: \(port))"
+                ]
+            )
+        }
+        listenerErrorBox.lock()
+        let err = listenerError
+        listenerErrorBox.unlock()
+        if let err {
+            listener.cancel()
+            throw NSError(
+                domain: "cmux.HTTPControlServer",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "TCP listener entered .failed: \(err)"
+                ]
+            )
+        }
+        guard let resolvedPort = listener.port?.rawValue else {
+            listener.cancel()
+            throw NSError(
+                domain: "cmux.HTTPControlServer",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "TCP listener became .ready without a port"
+                ]
+            )
+        }
         lock.lock()
         self.tcpListener = listener
-        self._boundPort = resolved
+        self._boundPort = resolvedPort
         lock.unlock()
-        return resolved
+        return resolvedPort
     }
 
     /// Binds an AF_UNIX listener at `path`. Mode `0600`. D12 — uses
