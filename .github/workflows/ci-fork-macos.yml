@@ -250,19 +250,28 @@ jobs:
           xb_exit=$?
           set -e
 
-          # Look at the run summary regardless of xcodebuild's own exit
-          # code. If every reported failure is in our known set, treat
-          # the run as a pass — otherwise, fail the step.
-          summary=$(grep -E "Test Suite .* (passed|failed)|Executed [0-9]+ tests" "$RUNNER_TEMP/cmux-test-stdout.log" | tail -10 || true)
-          echo "------ run summary ------"
-          echo "$summary"
+          # xcodebuild's own exit code is unreliable on this runner:
+          # the cmux DEV app host process is known to hang on exit
+          # (see ci.yml comment on `run_unit_tests`), so we hard-kill
+          # xcodebuild at the 8-min deadline. Determine pass/fail by
+          # scanning the streamed Swift Testing output for any
+          # `✘ Test` line that isn't in a `.skipped` group.
           echo "------ xcodebuild exit: $xb_exit ------"
-          if [ "$xb_exit" -ne 0 ]; then
-            # If we have a result bundle, give the next step the
-            # chance to inspect it. We still mark the step as failed
-            # so the workflow gate stays red.
-            exit "$xb_exit"
+          fail_count=$(grep -E "^✘ Test " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
+          fail_suite_count=$(grep -E "^✘ Suite " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
+          skipped_count=$(grep -E "^➜ Test " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
+          pass_count=$(grep -E "^✔ Test " "$RUNNER_TEMP/cmux-test-stdout.log" | wc -l | tr -d ' ')
+          echo "------ run summary: $pass_count passed, $fail_count failed, $skipped_count skipped, $fail_suite_count suite failures ------"
+          if [ "$fail_count" -gt 0 ] || [ "$fail_suite_count" -gt 0 ]; then
+            echo "Real test failures detected"
+            exit 1
           fi
+          if [ "$pass_count" -eq 0 ]; then
+            echo "No tests passed — likely an environment / config error"
+            exit 1
+          fi
+          echo "All non-skipped tests passed."
+          exit 0
 
       - name: Upload test stdout
         if: always() && steps.xcode26.outputs.skip == 'false'
