@@ -330,8 +330,16 @@ public final class HTTPControlServer: @unchecked Sendable {
 
     private func readUDS(io: DispatchIO, state: ConnectionState, port: UInt16, ioQueue: DispatchQueue) {
         io.read(offset: 0, length: 64 * 1024, queue: ioQueue) { [weak self] done, data, error in
+            let preview: String = {
+                guard let data = data, !data.isEmpty else { return "<empty>" }
+                let bytes = Data(data)
+                let s = String(data: bytes.prefix(80), encoding: .utf8) ?? "<non-utf8>"
+                return s
+                    .replacingOccurrences(of: "\r", with: "\\r")
+                    .replacingOccurrences(of: "\n", with: "\\n")
+            }()
             FileHandle.standardError.write(
-                Data("[cmux-http-debug] read cb done=\(done) data=\(data?.count ?? -1) err=\(error) parsed=\(state.dispatched)\n".utf8)
+                Data("[cmux-http-debug] read cb done=\(done) data=\(data?.count ?? -1) err=\(error) parsed=\(state.dispatched) port=\(port) preview=\(preview)\n".utf8)
             )
             guard let self else { return }
             // Already dispatched the request? Ignore subsequent
