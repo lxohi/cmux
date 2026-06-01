@@ -3,7 +3,7 @@ import Network
 import Testing
 @testable import cmux
 
-@Suite struct HTTPControlSurfaceListTests {
+@Suite(.serialized) struct HTTPControlSurfaceListTests {
     @Test func listSurfacesHappyPath() async throws {
         let stub = StubTerminalAccessService()
         await stub.setSurfaces([

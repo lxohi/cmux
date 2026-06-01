@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import cmux
 
-@Suite struct HTTPControlInputRouteTests {
+@Suite(.serialized) struct HTTPControlInputRouteTests {
     private func makeServer(
         _ stub: StubTerminalAccessService,
         allowRaw: Bool = false

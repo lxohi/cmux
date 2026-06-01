@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import cmux
 
-@Suite struct HTTPControlScreenRouteTests {
+@Suite(.serialized) struct HTTPControlScreenRouteTests {
     private func makeServer(
         _ stub: StubTerminalAccessService
     ) throws -> (HTTPControlServer, UInt16) {

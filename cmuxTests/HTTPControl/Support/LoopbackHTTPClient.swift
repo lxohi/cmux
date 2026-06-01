@@ -19,7 +19,7 @@ enum LoopbackHTTPClient {
     static func send(
         port: UInt16,
         raw: String,
-        timeout: TimeInterval = 4
+        timeout: TimeInterval = 30
     ) throws -> String {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else {

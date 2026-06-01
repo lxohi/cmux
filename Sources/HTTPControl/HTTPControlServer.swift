@@ -307,15 +307,12 @@ public final class HTTPControlServer: @unchecked Sendable {
     ///     for the UDS transport (UDS clients send `Host: localhost:0`)
     ///     and the actual bound port for TCP.
     private func acceptRawFD(_ fd: Int32, port: UInt16) {
-        FileHandle.standardError.write(
-            Data("[cmux-http-debug] acceptRawFD fd=\(fd) port=\(port)\n".utf8)
-        )
-        // Use a concurrent global queue for the per-connection
-        // DispatchIO so reads aren't serialized behind the accept
-        // loop (which runs on `self.queue`, a serial queue). On
-        // bursty connection arrivals the accept loop holds the
-        // serial queue in its while-true drain, starving the
-        // io.read callbacks scheduled on the same queue.
+        // Per-connection DispatchIO uses a concurrent global queue so
+        // reads aren't serialized behind the accept loop, which runs on
+        // `self.queue` (a serial queue). On bursty connection arrivals
+        // the accept loop's while-true drain would otherwise hog the
+        // serial queue and starve the io.read callbacks scheduled on
+        // the same queue.
         let ioQueue = DispatchQueue.global(qos: .userInitiated)
         let io = DispatchIO(
             type: .stream,
@@ -330,17 +327,6 @@ public final class HTTPControlServer: @unchecked Sendable {
 
     private func readUDS(io: DispatchIO, state: ConnectionState, port: UInt16, ioQueue: DispatchQueue) {
         io.read(offset: 0, length: 64 * 1024, queue: ioQueue) { [weak self] done, data, error in
-            let preview: String = {
-                guard let data = data, !data.isEmpty else { return "<empty>" }
-                let bytes = Data(data)
-                let s = String(data: bytes.prefix(80), encoding: .utf8) ?? "<non-utf8>"
-                return s
-                    .replacingOccurrences(of: "\r", with: "\\r")
-                    .replacingOccurrences(of: "\n", with: "\\n")
-            }()
-            FileHandle.standardError.write(
-                Data("[cmux-http-debug] read cb done=\(done) data=\(data?.count ?? -1) err=\(error) parsed=\(state.dispatched) port=\(port) preview=\(preview)\n".utf8)
-            )
             guard let self else { return }
             // Already dispatched the request? Ignore subsequent
             // callbacks (DispatchIO fires once with data then again
@@ -350,50 +336,25 @@ public final class HTTPControlServer: @unchecked Sendable {
                 return
             }
             if let data, !data.isEmpty {
-                let bytes = Data(data)
-                state.parser.feed(bytes)
-                // Diagnostic: dump full last 16 bytes as hex to see
-                // whether the request actually ends in \r\n\r\n.
-                let tail = bytes.suffix(16).map { String(format: "%02x", $0) }
-                    .joined(separator: " ")
-                FileHandle.standardError.write(
-                    Data("[cmux-http-debug] feed bytes=\(bytes.count) tailHex=\(tail) port=\(port)\n".utf8)
-                )
+                state.parser.feed(Data(data))
                 do {
-                    let outcome = try state.parser.next()
-                    FileHandle.standardError.write(
-                        Data("[cmux-http-debug] parser outcome \(outcome) port=\(port)\n".utf8)
-                    )
-                    switch outcome {
+                    switch try state.parser.next() {
                     case .complete(let req):
                         state.dispatched = true
-                        // Use Task.detached (not Task {}) — the
-                        // surrounding closure is non-isolated, so a
-                        // plain Task inherits no actor but can fail
-                        // to schedule under the cmux DEV xctest host
-                        // on github-hosted runners. Task.detached
-                        // explicitly runs on the global concurrent
-                        // executor. Do NOT bridge back to a dispatch
-                        // queue via semaphore — sem.wait() blocks a
-                        // global queue worker, and with many
-                        // concurrent test connections the pool gets
-                        // saturated, starving subsequent io.read
-                        // callbacks. Instead, the Task hands the
-                        // response straight to writeUDS, which
-                        // schedules io.write asynchronously.
-                        FileHandle.standardError.write(
-                            Data("[cmux-http-debug] complete; scheduling task port=\(port)\n".utf8)
-                        )
+                        // Use Task.detached (not Task {}). A plain
+                        // Task inherits no actor but can fail to
+                        // schedule under the cmux DEV xctest host on
+                        // github-hosted runners. Task.detached runs
+                        // on the global concurrent executor. Do NOT
+                        // bridge back to a dispatch queue via
+                        // semaphore — sem.wait() blocks a global
+                        // queue worker, starving subsequent io.read
+                        // callbacks when many connections arrive at
+                        // once.
                         Task.detached(priority: .userInitiated) { [weak self] in
                             guard let self else { return }
-                            FileHandle.standardError.write(
-                                Data("[cmux-http-debug] Task.detached body port=\(port)\n".utf8)
-                            )
                             let resp = await self.computeResponse(
                                 req: req, port: port
-                            )
-                            FileHandle.standardError.write(
-                                Data("[cmux-http-debug] writing resp \(resp.status)\n".utf8)
                             )
                             self.writeUDS(resp, io: io)
                         }
@@ -442,9 +403,6 @@ public final class HTTPControlServer: @unchecked Sendable {
     }
 
     private func computeResponse(req: HTTPRequest, port: UInt16) async -> JSONResponses.Response {
-        FileHandle.standardError.write(
-            Data("[cmux-http-debug] computeResponse method=\(req.method) path=\(req.path) port=\(port)\n".utf8)
-        )
         guard isEnabled() else {
             return JSONResponses.error(.featureDisabled)
         }
@@ -469,9 +427,6 @@ public final class HTTPControlServer: @unchecked Sendable {
     }
 
     private func handleUDS(_ req: HTTPRequest, io: DispatchIO, port: UInt16) async {
-        FileHandle.standardError.write(
-            Data("[cmux-http-debug] handleUDS method=\(req.method) path=\(req.path) port=\(port)\n".utf8)
-        )
         guard isEnabled() else {
             writeUDS(JSONResponses.error(.featureDisabled), io: io)
             return
@@ -518,16 +473,10 @@ public final class HTTPControlServer: @unchecked Sendable {
         head += "Connection: close\r\n\r\n"
         var bytes = Data(head.utf8)
         bytes.append(resp.body)
-        FileHandle.standardError.write(
-            Data("[cmux-http-debug] writeUDS status=\(resp.status) bytes=\(bytes.count)\n".utf8)
-        )
         let dd = bytes.withUnsafeBytes { raw in
             DispatchData(bytes: raw)
         }
-        io.write(offset: 0, data: dd, queue: queue) { done, _, error in
-            FileHandle.standardError.write(
-                Data("[cmux-http-debug] write cb done=\(done) err=\(error)\n".utf8)
-            )
+        io.write(offset: 0, data: dd, queue: queue) { _, _, _ in
             io.close(flags: .stop)
         }
     }

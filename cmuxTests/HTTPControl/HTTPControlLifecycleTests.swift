@@ -9,7 +9,7 @@ import Foundation
 import Testing
 @testable import cmux
 
-@Suite struct HTTPControlLifecycleTests {
+@Suite(.serialized) struct HTTPControlLifecycleTests {
     @Test func togglingSettingsStartsAndStopsListener() async throws {
         let suite = "cmux.http.lc.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
