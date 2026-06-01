@@ -310,19 +310,26 @@ public final class HTTPControlServer: @unchecked Sendable {
         FileHandle.standardError.write(
             Data("[cmux-http-debug] acceptRawFD fd=\(fd) port=\(port)\n".utf8)
         )
+        // Use a concurrent global queue for the per-connection
+        // DispatchIO so reads aren't serialized behind the accept
+        // loop (which runs on `self.queue`, a serial queue). On
+        // bursty connection arrivals the accept loop holds the
+        // serial queue in its while-true drain, starving the
+        // io.read callbacks scheduled on the same queue.
+        let ioQueue = DispatchQueue.global(qos: .userInitiated)
         let io = DispatchIO(
             type: .stream,
             fileDescriptor: fd,
-            queue: queue,
+            queue: ioQueue,
             cleanupHandler: { _ in Darwin.close(fd) }
         )
         io.setLimit(lowWater: 1)
         let state = ConnectionState()
-        readUDS(io: io, state: state, port: port)
+        readUDS(io: io, state: state, port: port, ioQueue: ioQueue)
     }
 
-    private func readUDS(io: DispatchIO, state: ConnectionState, port: UInt16) {
-        io.read(offset: 0, length: 64 * 1024, queue: queue) { [weak self] done, data, error in
+    private func readUDS(io: DispatchIO, state: ConnectionState, port: UInt16, ioQueue: DispatchQueue) {
+        io.read(offset: 0, length: 64 * 1024, queue: ioQueue) { [weak self] done, data, error in
             FileHandle.standardError.write(
                 Data("[cmux-http-debug] read cb done=\(done) data=\(data?.count ?? -1) err=\(error) parsed=\(state.dispatched)\n".utf8)
             )
@@ -381,7 +388,7 @@ public final class HTTPControlServer: @unchecked Sendable {
                                 io: io
                             )
                         } else {
-                            self.readUDS(io: io, state: state, port: port)
+                            self.readUDS(io: io, state: state, port: port, ioQueue: ioQueue)
                         }
                     }
                 } catch HTTPParseError.bodyTooLarge,
