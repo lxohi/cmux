@@ -326,7 +326,36 @@ public final class HTTPControlServer: @unchecked Sendable {
                 do {
                     switch try state.parser.next() {
                     case .complete(let req):
-                        Task { await self.handleUDS(req, io: io, port: port) }
+                        // Swift Concurrency `Task { ... }` continuations don't
+                        // schedule reliably from the read callback under the
+                        // cmux DEV app's xctest host on github-hosted runners
+                        // (Tasks are created but the body never runs). Dispatch
+                        // onto a background queue and use a semaphore to bridge
+                        // back to the synchronous path.
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            FileHandle.standardError.write(
+                                Data("[cmux-http-debug] dispatch entered\n".utf8)
+                            )
+                            let sem = DispatchSemaphore(value: 0)
+                            var resp: JSONResponses.Response?
+                            Task.detached(priority: .userInitiated) {
+                                FileHandle.standardError.write(
+                                    Data("[cmux-http-debug] Task.detached body\n".utf8)
+                                )
+                                let r = await self.computeResponse(
+                                    req: req, port: port
+                                )
+                                resp = r
+                                sem.signal()
+                            }
+                            sem.wait()
+                            if let resp {
+                                FileHandle.standardError.write(
+                                    Data("[cmux-http-debug] writing resp \(resp.status)\n".utf8)
+                                )
+                                self.writeUDS(resp, io: io)
+                            }
+                        }
                         return
                     case .need:
                         self.readUDS(io: io, state: state, port: port)
@@ -350,6 +379,33 @@ public final class HTTPControlServer: @unchecked Sendable {
                 io.close(flags: .stop)
             }
         }
+    }
+
+    private func computeResponse(req: HTTPRequest, port: UInt16) async -> JSONResponses.Response {
+        FileHandle.standardError.write(
+            Data("[cmux-http-debug] computeResponse method=\(req.method) path=\(req.path) port=\(port)\n".utf8)
+        )
+        guard isEnabled() else {
+            return JSONResponses.error(.featureDisabled)
+        }
+        let allowlist = hostAllowlistFor(port)
+        switch allowlist.evaluate(
+            host: req.header("host"),
+            origin: req.header("origin")
+        ) {
+        case .missingHost:
+            return JSONResponses.error(.badRequest(reason: "missing Host"))
+        case .forbiddenHost:
+            return JSONResponses.error(.forbidden(reason: "host not allowed"))
+        case .forbiddenOrigin:
+            return JSONResponses.error(.forbidden(reason: "origin not allowed"))
+        case .ok:
+            break
+        }
+        if auth.evaluate(authorizationHeader: req.header("authorization")) != .ok {
+            return JSONResponses.error(.unauthorized)
+        }
+        return await routeTable.dispatch(req)
     }
 
     private func handleUDS(_ req: HTTPRequest, io: DispatchIO, port: UInt16) async {
