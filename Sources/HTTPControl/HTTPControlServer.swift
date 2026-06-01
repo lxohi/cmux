@@ -107,7 +107,13 @@ public final class HTTPControlServer: @unchecked Sendable {
         tcpOptions.noDelay = true
         let params = NWParameters(tls: nil, tcp: tcpOptions)
         params.allowLocalEndpointReuse = true
-        let portEndpoint = NWEndpoint.Port(rawValue: port) ?? .any
+        // For ephemeral binding (port 0) use the `.any` sentinel —
+        // `Port(rawValue: 0)` returns `Port(0)`, which Network.framework
+        // treats as a concrete-but-invalid port and silently never
+        // reaches `.ready`. See cmuxTests/BrowserConfigTests.swift
+        // for the canonical loopback listener pattern.
+        let portEndpoint: NWEndpoint.Port =
+            port == 0 ? .any : (NWEndpoint.Port(rawValue: port) ?? .any)
         params.requiredLocalEndpoint = .hostPort(
             host: NWEndpoint.Host("127.0.0.1"),
             port: portEndpoint
