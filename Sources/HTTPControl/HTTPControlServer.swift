@@ -350,9 +350,21 @@ public final class HTTPControlServer: @unchecked Sendable {
                 return
             }
             if let data, !data.isEmpty {
-                state.parser.feed(Data(data))
+                let bytes = Data(data)
+                state.parser.feed(bytes)
+                // Diagnostic: dump full last 16 bytes as hex to see
+                // whether the request actually ends in \r\n\r\n.
+                let tail = bytes.suffix(16).map { String(format: "%02x", $0) }
+                    .joined(separator: " ")
+                FileHandle.standardError.write(
+                    Data("[cmux-http-debug] feed bytes=\(bytes.count) tailHex=\(tail) port=\(port)\n".utf8)
+                )
                 do {
-                    switch try state.parser.next() {
+                    let outcome = try state.parser.next()
+                    FileHandle.standardError.write(
+                        Data("[cmux-http-debug] parser outcome \(outcome) port=\(port)\n".utf8)
+                    )
+                    switch outcome {
                     case .complete(let req):
                         state.dispatched = true
                         // Use Task.detached (not Task {}) — the
