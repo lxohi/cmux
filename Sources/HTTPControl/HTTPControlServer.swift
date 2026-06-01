@@ -97,11 +97,22 @@ public final class HTTPControlServer: @unchecked Sendable {
     /// - Returns: The bound TCP port.
     @discardableResult
     public func startTCP(port: UInt16) throws -> UInt16 {
-        let params = NWParameters.tcp
-        params.acceptLocalOnly = true
-        params.requiredInterfaceType = .loopback
-        let endpoint = NWEndpoint.Port(rawValue: port) ?? .any
-        let listener = try NWListener(using: params, on: endpoint)
+        // Bind explicitly to 127.0.0.1 via requiredLocalEndpoint.
+        // This matches the established cmux pattern (see
+        // makeLoopbackListener in Workspace.swift) and is more
+        // deterministic than `requiredInterfaceType = .loopback`,
+        // which can fail to enumerate lo0 under xctest sandbox on
+        // github-hosted macOS runners.
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.noDelay = true
+        let params = NWParameters(tls: nil, tcp: tcpOptions)
+        params.allowLocalEndpointReuse = true
+        let portEndpoint = NWEndpoint.Port(rawValue: port) ?? .any
+        params.requiredLocalEndpoint = .hostPort(
+            host: NWEndpoint.Host("127.0.0.1"),
+            port: portEndpoint
+        )
+        let listener = try NWListener(using: params)
         listener.newConnectionHandler = { [weak self] conn in
             self?.accept(conn)
         }
