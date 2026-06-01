@@ -100,6 +100,10 @@ final class HTTPControlUDSListener: @unchecked Sendable {
             throw HTTPControlUDSListenerError.chmodFailed(error)
         }
 
+        // Capture `s` in the closure rather than reading `self.fd`,
+        // which would race with the lock-protected `self.fd = s`
+        // assignment below — see HTTPControlTCPListener for the same
+        // pattern and rationale.
         let src = DispatchSource.makeReadSource(fileDescriptor: s, queue: queue)
         src.setEventHandler { [weak self] in
             guard let self else { return }
@@ -111,7 +115,7 @@ final class HTTPControlUDSListener: @unchecked Sendable {
                 var clen = socklen_t(MemoryLayout<sockaddr_un>.size)
                 let cfd = withUnsafeMutablePointer(to: &caddr) {
                     $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        accept(self.fd, $0, &clen)
+                        accept(s, $0, &clen)
                     }
                 }
                 if cfd < 0 {
@@ -120,11 +124,11 @@ final class HTTPControlUDSListener: @unchecked Sendable {
                 self.onAccept(cfd)
             }
         }
-        src.resume()
         lock.lock()
         self.fd = s
         self.source = src
         lock.unlock()
+        src.resume()
     }
 
     /// Cancels the accept source, closes the listener fd, and unlinks

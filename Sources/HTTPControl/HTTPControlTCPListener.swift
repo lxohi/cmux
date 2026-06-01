@@ -110,6 +110,11 @@ final class HTTPControlTCPListener: @unchecked Sendable {
             throw HTTPControlTCPListenerError.resolvedPortZero
         }
 
+        // Capture `s` directly in the closure rather than reading
+        // `self.fd`, which would have a race window between
+        // `src.resume()` and the lock-protected `self.fd = s`
+        // assignment — an early-arriving connection would call
+        // accept(-1) and be silently dropped.
         let src = DispatchSource.makeReadSource(fileDescriptor: s, queue: queue)
         src.setEventHandler { [weak self] in
             guard let self else { return }
@@ -119,7 +124,7 @@ final class HTTPControlTCPListener: @unchecked Sendable {
                 var clen = socklen_t(MemoryLayout<sockaddr_in>.size)
                 let cfd = withUnsafeMutablePointer(to: &caddr) {
                     $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        accept(self.fd, $0, &clen)
+                        accept(s, $0, &clen)
                     }
                 }
                 if cfd < 0 {
@@ -128,12 +133,12 @@ final class HTTPControlTCPListener: @unchecked Sendable {
                 self.onAccept(cfd)
             }
         }
-        src.resume()
         lock.lock()
         self.fd = s
         self.source = src
         self.port = resolvedPort
         lock.unlock()
+        src.resume()
     }
 
     /// Cancels the accept source and closes the listener fd.
