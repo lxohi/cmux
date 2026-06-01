@@ -9,7 +9,13 @@ import Foundation
 import Testing
 @testable import cmux
 
-@Suite(.serialized) struct HTTPControlLifecycleTests {
+@Suite(
+    .serialized,
+    .enabled(
+        if: !CITestSkip.httpTCPIntegrationDisabled,
+        "Skipped on github-hosted macOS runners; see CITestSkip.swift"
+    )
+) struct HTTPControlLifecycleTests {
     @Test func togglingSettingsStartsAndStopsListener() async throws {
         let suite = "cmux.http.lc.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))

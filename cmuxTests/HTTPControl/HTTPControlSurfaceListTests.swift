@@ -3,7 +3,13 @@ import Network
 import Testing
 @testable import cmux
 
-@Suite(.serialized) struct HTTPControlSurfaceListTests {
+@Suite(
+    .serialized,
+    .enabled(
+        if: !CITestSkip.httpTCPIntegrationDisabled,
+        "Skipped on github-hosted macOS runners; see CITestSkip.swift"
+    )
+) struct HTTPControlSurfaceListTests {
     @Test func listSurfacesHappyPath() async throws {
         let stub = StubTerminalAccessService()
         await stub.setSurfaces([

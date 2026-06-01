@@ -2,7 +2,13 @@ import Foundation
 import Testing
 @testable import cmux
 
-@Suite(.serialized) struct HTTPControlInputRouteTests {
+@Suite(
+    .serialized,
+    .enabled(
+        if: !CITestSkip.httpTCPIntegrationDisabled,
+        "Skipped on github-hosted macOS runners; see CITestSkip.swift"
+    )
+) struct HTTPControlInputRouteTests {
     private func makeServer(
         _ stub: StubTerminalAccessService,
         allowRaw: Bool = false
