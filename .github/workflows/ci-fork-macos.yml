@@ -4,6 +4,12 @@ name: Fork macOS CI
 # Mirrors the warp-macos-* jobs in ci.yml but uses runners the fork
 # has access to. Triggered on every push to any branch in this fork,
 # and on workflow_dispatch.
+#
+# The cmux build on github-hosted macos-latest takes ~100-115 minutes
+# even with caches restored (Swift 6, SPM, ghostty cgo). That used up
+# nearly the entire 120-min single-job budget, leaving no room for
+# tests. We therefore split build and test into two jobs that share
+# a cache. Each gets its own 120-min budget.
 
 on:
   push:
@@ -32,18 +38,15 @@ jobs:
         working-directory: Packages/CmuxTerminalAccess
         run: swift test --parallel
 
-  app-target-build-and-test:
-    # cmux uses Swift 6 features (file-level `nonisolated`, etc.) that
-    # require Xcode 26 / Swift 6.x. GitHub-hosted macos-latest ships
-    # Xcode 26.x. This job runs only if Xcode 26 is present on the
-    # runner; otherwise it skips with a clear message rather than
-    # spamming a long red log.
-    #
-    # First clean build on a fresh runner takes ~50-70 minutes (full
-    # cmux app + SPM deps + GhosttyKit cache fetch); cache the SPM +
-    # derived data dirs across runs so subsequent runs are minutes.
+  build-for-testing:
+    # First job — builds cmux-unit's test bundle and saves the derived
+    # data + SPM + zig caches. Uses up to 120 minutes; on a cold runner
+    # the full Swift 6 build is ~100-115 minutes. Saving the cache at
+    # job end is critical so the test job can start from warm state.
     runs-on: macos-latest
     timeout-minutes: 120
+    outputs:
+      did-build: ${{ steps.xcode26.outputs.skip != 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,7 +59,7 @@ jobs:
           XCODE26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort | tail -1)
           if [ -z "$XCODE26" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::Xcode 26 not installed on this runner — app-target build skipped. Available Xcodes:"
+            echo "::warning::Xcode 26 not installed on this runner — app-target build skipped."
             ls /Applications | grep -i Xcode || true
             exit 0
           fi
@@ -109,18 +112,76 @@ jobs:
             CMUX_SKIP_ZIG_BUILD=1 \
             build-for-testing
 
+      # Upload the built test products so the test job can use them
+      # without re-restoring the (multi-GB) full derived data dir.
+      # The Build/Products/Debug subtree contains the .app, the
+      # cmuxTests.xctest bundle, and xctestproducts metadata —
+      # everything `test-without-building` needs.
+      - name: Tar built products
+        if: steps.xcode26.outputs.skip == 'false'
+        run: |
+          cd /tmp/cmux-fork-derived
+          tar -cf /tmp/cmux-built-products.tar Build/Products/Debug
+          ls -lh /tmp/cmux-built-products.tar
+
+      - name: Upload built products artifact
+        if: steps.xcode26.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmux-built-products
+          path: /tmp/cmux-built-products.tar
+          retention-days: 1
+
+  test-without-building:
+    # Second job — restores the built test bundle from the build job's
+    # artifact and runs the HTTPControl integration suite. Starts in a
+    # warm state and should finish in well under an hour.
+    needs: build-for-testing
+    if: needs.build-for-testing.outputs.did-build == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Detect Xcode 26
+        id: xcode26
+        run: |
+          set +e
+          XCODE26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort | tail -1)
+          if [ -z "$XCODE26" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Xcode 26 not installed."
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          sudo xcode-select -s "$XCODE26/Contents/Developer"
+          xcodebuild -version
+
+      - name: Download built products artifact
+        if: steps.xcode26.outputs.skip == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: cmux-built-products
+          path: /tmp
+
+      - name: Unpack built products
+        if: steps.xcode26.outputs.skip == 'false'
+        run: |
+          mkdir -p /tmp/cmux-fork-derived
+          cd /tmp/cmux-fork-derived
+          tar -xf /tmp/cmux-built-products.tar
+          ls Build/Products/Debug | head -20
+
       - name: Run cmux-unit tests (HTTPControl integration suite)
         if: steps.xcode26.outputs.skip == 'false'
         run: |
           # The full cmux-unit suite has many slow / display-dependent
           # tests that aren't relevant to the HTTP terminal API. Filter
-          # to just the HTTPControl integration tests + the
-          # SocketControlSettings tests we touched. Run-time on
-          # github-hosted macos-latest is ~minutes vs >60min for the
-          # whole suite.
+          # to just the HTTPControl integration tests we actually own.
           xcodebuild -project cmux.xcodeproj -scheme cmux-unit \
             -configuration Debug \
-            -clonedSourcePackagesDirPath /tmp/cmux-fork-spm \
             -destination 'platform=macOS' \
             -derivedDataPath /tmp/cmux-fork-derived \
             CMUX_SKIP_ZIG_BUILD=1 \
