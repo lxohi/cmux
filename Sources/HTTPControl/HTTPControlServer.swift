@@ -381,15 +381,19 @@ public final class HTTPControlServer: @unchecked Sendable {
                     case .need:
                         if done {
                             // Read stream closed without a complete request.
+                            state.dispatched = true
                             self.writeUDS(
                                 JSONResponses.error(
                                     .badRequest(reason: "incomplete request")
                                 ),
                                 io: io
                             )
-                        } else {
-                            self.readUDS(io: io, state: state, port: port, ioQueue: ioQueue)
                         }
+                        // Otherwise just return — the SAME io.read
+                        // operation keeps firing this handler for
+                        // each chunk until the parser sees \r\n\r\n
+                        // (then we set dispatched=true) or until the
+                        // peer closes (done=true).
                     }
                 } catch HTTPParseError.bodyTooLarge,
                         HTTPParseError.headerTooLarge {
