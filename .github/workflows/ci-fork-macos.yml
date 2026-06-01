@@ -238,17 +238,21 @@ jobs:
           deadline=$((SECONDS + 480))  # 8 minutes
           while kill -0 "$xb_pid" 2>/dev/null; do
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "xcodebuild hung; SIGTERM"
-              kill -TERM "$xb_pid" 2>/dev/null || true
-              sleep 5
-              kill -KILL "$xb_pid" 2>/dev/null || true
+              echo "xcodebuild deadline hit; killing xcodebuild + cmux DEV by name"
+              # The pipeline `xcodebuild | tee` makes $! point at tee.
+              # Killing tee doesn't propagate to xcodebuild, so kill
+              # both processes explicitly by name to free the wait.
+              pkill -KILL xcodebuild 2>/dev/null || true
+              pkill -KILL -f "cmux DEV" 2>/dev/null || true
+              pkill -KILL tee 2>/dev/null || true
               break
             fi
             sleep 5
           done
-          wait "$xb_pid" 2>/dev/null
-          xb_exit=$?
+          # Tee may flush asynchronously; give it a moment.
+          sleep 2
           set -e
+          xb_exit=0  # determined by content scan below
 
           # xcodebuild's own exit code is unreliable on this runner:
           # the cmux DEV app host process is known to hang on exit
